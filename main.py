@@ -36,7 +36,7 @@ PREFIX_IGNORE                 = (',', '.', '!')    # 無視プレフィックス
 MENTION_RESTRICTION           = discord.AllowedMentions(everyone=False, users=True, roles=False, replied_user=True)
 
 # 基本情報
-BOT_VERSION    = 'v1.0.21-202607B22'
+BOT_VERSION    = 'v1.0.22-202607B23'
 AUTHOR_NAME    = 'Hinata983'
 GITHUB_URL     = 'https://github.com/Hinata983/Echo'
 
@@ -938,9 +938,6 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # メッセージログ
-    logger.info(f"User Message ({message.author.name} - {message.author.id}): {message.content}")
-
     # デバッグコマンド
     if discord_client.user in message.mentions and '..debug' in message.content:
         if message.author.id == MASTER_USER_ID:
@@ -980,6 +977,9 @@ async def on_message(message):
             except Exception as e:
                 logger.error(f"クールダウンメッセージ削除エラー: {e}")
         return
+
+    # メッセージログ
+    logger.info(f"User Message ({message.author.name} - {message.author.id}): {message.content}")
 
     # 処理開始
     content = message.content[:MAX_MESSAGE_LENGTH]
