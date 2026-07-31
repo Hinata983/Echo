@@ -36,7 +36,7 @@ PREFIX_IGNORE                 = (',', '.', '!')    # 無視プレフィックス
 MENTION_RESTRICTION           = discord.AllowedMentions(everyone=False, users=True, roles=False, replied_user=True)
 
 # 基本情報
-BOT_VERSION    = 'v1.0.22-202607B23'
+BOT_VERSION    = 'v1.0.23-202608B01'
 AUTHOR_NAME    = 'Hinata983'
 GITHUB_URL     = 'https://github.com/Hinata983/Echo'
 
@@ -271,10 +271,10 @@ UI_TRANSLATIONS = {
         "ja": "全チャンネル無効", "en": "Disable All Channels", "fr": "Désactiver tous les salons", "de": "Alle Kanäle deaktivieren", "ko": "모든 채널 비활성화", "zh": "停用所有頻道"
     },
     "btn_user_def_enable": {
-        "ja": "ユーザーデフォルト有効", "en": "Enable User Default", "fr": "Activer par défaut", "de": "Benutzerstandard aktivieren", "ko": "사용자 기본값 활성화", "zh": "啟用使用者預設"
+        "ja": "デフォルト有効", "en": "Enable User Default", "fr": "Activer par défaut", "de": "Benutzerstandard aktivieren", "ko": "사용자 기본값 활성화", "zh": "啟用使用者預設"
     },
     "btn_user_def_disable": {
-        "ja": "ユーザーデフォルト無効", "en": "Disable User Default", "fr": "Désactiver par défaut", "de": "Benutzerstandard deaktivieren", "ko": "사용자 기본값 비활성화", "zh": "停用使用者預設"
+        "ja": "デフォルト無効", "en": "Disable User Default", "fr": "Désactiver par défaut", "de": "Benutzerstandard deaktivieren", "ko": "사용자 기본값 비활성화", "zh": "停用使用者預設"
     },
     "select_channel_placeholder": {
         "ja": "設定を切り替えるチャンネルを選択",
@@ -525,23 +525,35 @@ async def check_cooldown(user_id, user_name):
             logger.error(f"データベースクールダウンチェックエラー: {e}")
             return "ERROR", None
 
-# 有効性チェック
-async def check_enabled(user_id, guild_id, channel_id):
+# チャンネル有効性チェック
+async def check_enabled_channel(channel_id):
     try:
         async with db_conn.execute(
-            "SELECT "
-            "COALESCE((SELECT user_enabled FROM user_guild_settings WHERE user_id = ? AND guild_id = ?), "
-            "(SELECT default_user_enabled FROM guilds WHERE guild_id = ?), 0), "
-            "(SELECT channel_enabled FROM channels WHERE channel_id = ?)", 
-            (user_id, guild_id, guild_id, channel_id)
+            "SELECT channel_enabled FROM channels WHERE channel_id = ?", 
+            (channel_id,)
         ) as cursor:
             row = await cursor.fetchone()
         if not row:
             return False
-        user_enabled, channel_enabled = row
-        return bool(user_enabled) and channel_enabled is not None and bool(channel_enabled)
+        return bool(row[0])
     except Exception as e:
-        logger.error(f"データベース有効性確認エラー: {e}")
+        logger.error(f"データベースチャンネル有効性チェックエラー: {e}")
+        return False
+
+# ユーザー有効性チェック
+async def check_enabled_user(user_id, guild_id):
+    try:
+        async with db_conn.execute(
+            "SELECT COALESCE((SELECT user_enabled FROM user_guild_settings WHERE user_id = ? AND guild_id = ?), "
+            "(SELECT default_user_enabled FROM guilds WHERE guild_id = ?), 0)", 
+            (user_id, guild_id, guild_id)
+        ) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            return False
+        return bool(row[0])
+    except Exception as e:
+        logger.error(f"データベースユーザー有効性チェックエラー: {e}")
         return False
 
 # ユーザー設定共通処理
@@ -631,11 +643,19 @@ async def say_command(interaction: discord.Interaction, text: app_commands.Range
         await interaction.response.send_message("必要な権限が不足しています。Echoは以下のすべての権限がある場合のみ作動します：チャンネル表示、メッセージ履歴を読む、メッセージ管理、メッセージを送る、リンク埋め込み、ファイル添付、ウェブフックを管理", ephemeral=True, allowed_mentions=MENTION_RESTRICTION)
         return
         
+    # チャンネル有効性チェック
+    if not await check_enabled_channel(interaction.channel_id):
+        await interaction.response.send_message("このチャンネルではEchoが無効化されています。", ephemeral=True, allowed_mentions=MENTION_RESTRICTION)
+        return
+
     status, remaining = await check_cooldown(interaction.user.id, interaction.user.display_name)
     if status == "COOLDOWN":
         await interaction.response.send_message(f"クールダウン中 (残り {remaining} 秒)", ephemeral=True, allowed_mentions=MENTION_RESTRICTION)
         return
         
+    # メッセージログ
+    logger.info(f"User Message ({interaction.user.name} - {interaction.user.id}): {text}")
+
     await interaction.response.defer(ephemeral=True)
     try:
         webhook = await get_or_create_webhook(interaction.channel)
@@ -964,8 +984,12 @@ async def on_message(message):
     if not has_required_permissions(message.channel):
         return
 
-    # 有効性チェック
-    if not await check_enabled(message.author.id, message.guild.id, message.channel.id):
+    # チャンネル有効性チェック
+    if not await check_enabled_channel(message.channel.id):
+        return
+
+    # ユーザー有効性チェック
+    if not await check_enabled_user(message.author.id, message.guild.id):
         return
 
     # クールダウンチェック
